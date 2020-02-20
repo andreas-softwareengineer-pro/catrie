@@ -24,7 +24,7 @@ struct CatValue {
 	}
 };
 std::ostream& operator << (std::ostream& ostr, const CatValue& x) {
-	return ostr<<"tf: " << x.tf << ", df: " << x.idf;}
+	return ostr<<"\"tf\": " << x.tf << ", \"df\": " << x.idf;}
 
 template<class K, class V> struct FlexibleMap {
 //either sparse or dense.. but currently a mere std::map
@@ -151,7 +151,7 @@ void query (std::ostream &ostr, DocTrie& t, char *s)
 	while (tok) {
 		auto i = canonical_string.find(tok);
 		if (i == canonical_string.end()) {
-			ostr << " unk: \"" << tok << "\" }\n";
+			ostr << " \"unk\": \"" << tok << "\" }\n";
 			return;
 		}
 		else
@@ -162,7 +162,7 @@ void query (std::ostream &ostr, DocTrie& t, char *s)
 	if (qrc) {
 		ostr << "occ: [\n";
 		for (auto &rec: qrc -> m /*temporary; needs an interface*/ )
-			ostr << " { year: \"" << rec.first << "\", " << rec.second << " }\n";
+			ostr << " { \"year\": " << rec.first << ", " << rec.second << " }\n";
 		ostr << "]";
 	}
 	ostr << "}" << std::endl;
