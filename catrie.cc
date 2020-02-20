@@ -160,9 +160,13 @@ void query (std::ostream &ostr, DocTrie& t, char *s)
 	}
 	CatMap* qrc = t.query(v.begin(), v.end());
 	if (qrc) {
-		ostr << "occ: [\n";
-		for (auto &rec: qrc -> m /*temporary; needs an interface*/ )
-			ostr << " { \"year\": " << rec.first << ", " << rec.second << " }\n";
+		ostr << "\"occ\": [\n";
+		int j = qrc -> m.size();
+		for (auto &rec: qrc -> m /*temporary; needs an interface*/ ) {
+			ostr << " { \"year\": " << rec.first << ", " << rec.second << " }" ;
+			if (--j >0) ostr << ",";
+			ostr << "\n";
+		}
 		ostr << "]";
 	}
 	ostr << "}" << std::endl;
