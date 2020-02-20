@@ -29,6 +29,9 @@ std::ostream& operator << (std::ostream& ostr, const CatValue& x) {
 template<class K, class V> struct FlexibleMap {
 //either sparse or dense.. but currently a mere std::map
 	std::map<K,V> m;
+		int total_entries() {
+			return m.size();
+		}
 	FlexibleMap<K,V>& increment(const K& k, const V& v) {
 		m[k]+=v;
 		return *this;
@@ -47,6 +50,12 @@ class Trie {
 	struct Node {
 		std::map<K,Node> children;
 		V value;
+		int total_entries() {
+			int rc = 0;
+			for (auto & child : children)
+				rc += child.second.total_entries();
+			return rc + 1; // value
+		}
 	};
 	Node root;
 public:
@@ -84,6 +93,9 @@ public:
 		}
 		return n? &n->value :  0;
 	}
+	int  total_entries() {
+		return root.total_entries();
+	}
 };
 
 std::unordered_set<std::string> canonical_string;
@@ -91,7 +103,7 @@ std::unordered_set<std::string> canonical_string;
 typedef Trie<const char*,CatMap> DocTrie;
 
 #define MAX_NGRAM (4)
-size_t load_text(DocTrie &t, std::vector<const char*> tokens, short year, size_t max_ngram) {
+size_t load_text(DocTrie &t, std::vector<const char*>& tokens, short year, size_t max_ngram) {
 	std::unordered_set<CatMap*> this_doc_grams;
 	for (int i=0; i<tokens.size(); ++i) {
 				std::vector<CatMap*> e_seq;
@@ -113,6 +125,7 @@ void load_text_from_file(DocTrie& t, std::string filename){
 		char* s = buff;
 		short year = 0;
 		std::vector<const char * > tokens;
+
 		char* token=strtok(s," \t\f\r\n");
 		while (token)
 		{	
@@ -123,6 +136,7 @@ void load_text_from_file(DocTrie& t, std::string filename){
 			}
 			auto i = canonical_string.insert(token);
 			tokens.push_back(i.first->c_str());
+			//tokens.push_back(token);
 			token=strtok(0," \t\f\r\n");
 		}
 		load_text(t, tokens, year, MAX_NGRAM);
@@ -148,7 +162,7 @@ void query (std::ostream &ostr, DocTrie& t, char *s)
 	if (qrc) {
 		ostr << "occ: [\n";
 		for (auto &rec: qrc -> m /*temporary; needs an interface*/ )
-			ostr << " { yr: " << rec.first << ", " << rec.second << " }\n";
+			ostr << " { year: \"" << rec.first << \"", " << rec.second << " }\n";
 		ostr << "]";
 	}
 	ostr << "}" << std::endl;
@@ -244,6 +258,7 @@ int main (int argc, char** argv) {
 		else switch (argv[i][1]) {
 			case 'p': port=atoi(arg_value(i, argv, argc)); break;
 		}
+	std::cerr << "Read " << t.total_entries() << std::endl;
 	char buff[1024];
 	if (port >= 0) {
 		serve_port(t, port);
