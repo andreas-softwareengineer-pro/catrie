@@ -214,7 +214,12 @@ int serve_port(DocTrie& t, int port)
     while ((new_socket = accept(server_fd, (struct sockaddr *)&address,  
                        (socklen_t*)&addrlen))>=0) 
     { 
-	    valread = read( new_socket , buffer, 1024);
+	    int thisvalread;
+	    valread = 0;
+	    if ((thisvalread = recv( new_socket , buffer+valread, 1024-1-valread, MSG_WAITALL)) > 0)
+	    	{std::cout << thisvalread << std::endl;
+	    	valread += thisvalread;
+    	}
 	    buffer[valread]='\0'; 
 	    char* http_body = strstr( buffer , "\r\n\r\n");
 	    if(http_body) 
