@@ -162,7 +162,7 @@ void query (std::ostream &ostr, DocTrie& t, char *s)
 	if (qrc) {
 		ostr << "occ: [\n";
 		for (auto &rec: qrc -> m /*temporary; needs an interface*/ )
-			ostr << " { year: \"" << rec.first << \"", " << rec.second << " }\n";
+			ostr << " { year: \"" << rec.first << "\", " << rec.second << " }\n";
 		ostr << "]";
 	}
 	ostr << "}" << std::endl;
