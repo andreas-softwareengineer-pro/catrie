@@ -148,6 +148,7 @@ void query (std::ostream &ostr, DocTrie& t, char *s)
 	ostr << "{";
 	std::vector<const char * >v;
 	char* tok=strtok(s," \t\f\n\r") ;
+	int len = strlen(s);
 	while (tok) {
 		auto i = canonical_string.find(tok);
 		if (i == canonical_string.end()) {
@@ -160,7 +161,7 @@ void query (std::ostream &ostr, DocTrie& t, char *s)
 	}
 	CatMap* qrc = t.query(v.begin(), v.end());
 	if (qrc) {
-		ostr << "\"occ\": [\n";
+		ostr << "\"qlen\": " << len << ", \"occ\": [\n";
 		int j = qrc -> m.size();
 		for (auto &rec: qrc -> m /*temporary; needs an interface*/ ) {
 			ostr << " { \"year\": " << rec.first << ", " << rec.second << " }" ;
@@ -216,7 +217,7 @@ int serve_port(DocTrie& t, int port)
     { 
 	    int thisvalread;
 	    valread = 0;
-	    if ((thisvalread = recv( new_socket , buffer+valread, 1024-1-valread, MSG_WAITALL)) > 0)
+	    if ((thisvalread = recv( new_socket , buffer+valread, 1024-1-valread, 0)) > 0)
 	    	{std::cout << thisvalread << std::endl;
 	    	valread += thisvalread;
     	}
