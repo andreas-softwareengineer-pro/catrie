@@ -77,7 +77,7 @@ public:
 	}
 	CompactUI2UIMap() : q(0) {}
 
-	template<class InsertIterator> copy(InsertIterator ii) {
+	template<class InsertIterator> void copy(InsertIterator ii) {
 		std::pair<K, V> out_elem(~K(0U),0U);
 		const char* p=q;
 		bool flag;
