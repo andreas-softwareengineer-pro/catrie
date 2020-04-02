@@ -437,7 +437,7 @@ void query (std::ostream &ostr, DocTrie& t, char *s)
 		int j = qrcv.size();
 		for (auto &rec: qrcv /*temporary; needs an interface*/ ) {
 			ostr << " { \"year\": " << base_year-rec.first << ", \"tf\": " << rec.second << " }" ;
-			ostr << "\n";
+			ostr << (--j? "," : "") << "\n";
 		}
 		ostr << "]";
 	}
