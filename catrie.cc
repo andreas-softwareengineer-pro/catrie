@@ -18,19 +18,21 @@
 #include <algorithm>
 #include "CompactUI2UIMap.h"
 
-typedef short int CatKey; // year
+typedef unsigned int CatKey; // years ago
 struct CatValue {
 	int tf;
-	int idf;
-	CatValue() : tf(0), idf(0) {}
-	CatValue(int _tf, int _idf) : tf(_tf), idf(_idf) {}
+	int df;
+	CatValue() : tf(0), df(0) {}
+	CatValue(int _tf, int _df) : tf(_tf), df(_df) {}
 	CatValue & operator += (const CatValue& other) {
 		tf +=  other.tf;
-		idf += other.idf;
+		df += other.df;
 	}
+	//temporary hack
+	operator int() const {return tf;}
 };
 std::ostream& operator << (std::ostream& ostr, const CatValue& x) {
-	return ostr<<"\"tf\": " << x.tf << ", \"df\": " << x.idf;}
+	return ostr<<"\"tf\": " << x.tf << ", \"df\": " << x.df;}
 
 /* template<class K, class V> struct FlexibleMap {
 //either sparse or dense.. but currently a mere std::map
@@ -97,7 +99,7 @@ template <class K, class V>
 struct Trie {
 	struct Node {
 		//std::map<K,Node> children;
-		fpos_t start_pos;
+		long int start_pos;
 		Node *children;
 		int n_children;
 		K token;
@@ -116,7 +118,7 @@ struct Trie {
 				rc += children[i].total_entries();
 			return rc + 1; // value
 		}
-		Node(fpos_t _start_pos, K k) : start_pos(_start_pos),token(k), value(), children(0), n_children(0) {}
+		Node(long int _start_pos, K k) : start_pos(_start_pos),token(k), value(), children(0), n_children(0) {}
 		Node(Node&& other) {
 			children = other.children;
 			other.children = 0;
@@ -153,26 +155,30 @@ public:
 		}
 		n -> value.i += incr;
 	}
-	template <class InputIterator>
-	V* query(InputIterator begin, InputIterator end) {
-		Node* n = &root;
-		InputIterator i = begin;
-		while (i != end && n) {
+	void cache_children(Node* n, int level) {	
 			if (!n->children && n->n_children
 				// needs download?
 				&& cache.insert(n))
 					//2 a more generic way!
 					{
-						load_from_sorted_occ_file(ng_file, n, i-begin);
-						if (!n->children) return 0;
+						load_from_sorted_structured_occ_file(ng_file, n, level);
 					}
+	}
+
+	template <class InputIterator>
+	Node* query(InputIterator begin, InputIterator end) {
+		Node* n = &root;
+		InputIterator i = begin;
+		while (i != end && n) {
+			cache_children(n, i-begin);
+			if (!n->children) return 0;
 			Node qn(0U,*i);
 			auto ni = std::lower_bound(n->children,n->children+n->n_children,
 							qn, [](const Node& x, const Node& y){return strcmp(x.token,y.token) < 0;} );
 			n = (ni >= n->children+n->n_children || ni->token != *i)? 0 : ni;
 			++i;
 		}
-		return n? &n->value :  0;
+		return n;
 	}
 	int  total_entries() {
 		return root.total_entries();
@@ -190,16 +196,19 @@ typedef Trie<const char*,CatMap> DocTrie;
 struct LevelScaffold {
 	std::string token;
 	int n_occ, n_occ_record;
-	std::map<unsigned int,unsigned int> occurrences;
+	std::map<CatKey,CatValue> occurrences;
+	std::map<const char*,std::map<CatKey, unsigned int> > prefix_tf;
 	std::list<DocTrie::Node> children;	
 	DocTrie::Node* trie_elem;
 
-	operator << (const LevelScaffold& child) {
+	LevelScaffold &operator << (const LevelScaffold& child) {
 			n_occ_record += child.n_occ_record;
 			n_occ += child.n_occ;
 			for (auto &yo: child.occurrences)
-				occurrences.insert(std::pair<int,int>(yo.first,0)).first->second+=yo.second;
-		}
+				//only propagate tf; df should be already counted at all levels
+				occurrences.insert(std::pair<CatKey,CatValue>(yo.first,{})).first->second.tf+=yo.second.tf;
+		return *this;
+	}
 
 	LevelScaffold &store(size_t level_occ_num_thereshold)
 	{
@@ -226,14 +235,75 @@ struct LevelScaffold {
 			n_occ(0), n_occ_record(0) {}
 };
 	
-	void load_from_sorted_occ_file(FILE* f,
+static void read_occurrences(char* & s, std::vector<LevelScaffold>& stack)
+	{
+		do
+		{
+		char* e; //->pos_t !!
+		int year = std::strtol(s,&e,0);
+		s=e;
+		long f = 1L, df = 1L;
+		if (*s == ':') {
+			s++;
+			f = std::strtol(s,&e,0);
+			if (s==e) f = 1;
+			s=e;
+			if (*s == '/') {
+				s++;
+				df = std::strtol(s,&e,0);
+				if (s==e) df = f;
+				s=e;
+			}
+			//assert(!stack.empty());
+			int i = stack.size()-1;
+			auto &r = stack[i].occurrences.insert(std::pair<CatKey,CatValue>(base_year-year,{})).first->second;
+			r.df+=df; r.tf+=f;
+			f = df;
+			while (*s == '/') {
+				s++;
+				df = std::strtol(s,&e,0);
+				if (s==e) df = f;
+				s=e;
+				if (i-- < 1) {
+					//static int n_ex_n_level = 0;
+					//if (!n_ex_n_level++) std::cerr<<("DB format warning: n-gram level out of bounds (too many slashes)"); 
+				} else {
+				auto &r = stack[i].occurrences.insert(std::pair<CatKey,CatValue>(base_year-year,{})).first->second;
+				r.df += df;
+				f = df;
+				}
+			}
+		} else {
+					static int n_ex_occurrences = 0;
+					if (!n_ex_occurrences++) std::cerr<<("DB format error: tf/idf is missing (a semicolon is expected)"); 
+		}
+	}
+	while (*s == ',' && *++s);
+}
+
+static void read_occurrences(char* & s, std::map<CatKey,unsigned int>& fmap)
+{
+		char* e; //->pos_t !!
+		int year = std::strtol(s,&e,0);
+		s=e;
+		long f = 1L;
+		if (*s == ':') {
+			s++;
+			f = std::strtol(s,&e,0);
+			if (s==e) f = 1;
+			s=e;
+		}
+		fmap.insert(std::pair<CatKey,unsigned>(base_year-year,0U)).first->second+=f;
+}
+
+void load_from_sorted_structured_occ_file(FILE* f,
 		DocTrie::Node * root, int root_level)
 	{
 			std::cerr << "Load from pos: " << root->start_pos << ", tree level: " << root_level << std::endl;
-			LevelScaffold root_s("", root);
 			std::vector<LevelScaffold> stack;
+			stack.emplace_back("", root);
 			
-			fpos_t  start_pos = root -> start_pos;
+			long int  start_pos = root -> start_pos;
 			fseek(f,start_pos, SEEK_SET);
 			char buff[4096];
 			short term_read = 0;
@@ -241,36 +311,49 @@ struct LevelScaffold {
 			while(char *s = fgets(buff, 4096, f) ? buff : (term_read++? 0 : &(buff[0]='\0')))
 			{
 			char* tp = strchr(s,'\t');
+			char rectype = '#';
 			int year = -1;
 			if (tp) {
-				year = atoi(tp+1);
+				while (*s == ' ') ++s;
+				rectype = s[0];
+				s=tp + 1;
+			}
+			char *tail = 0;
+			tp = strchr(s,'\t');
+			if (tp) {
+				tail = tp + 1;
 				*tp = 0;
 			}
+			if (rectype > '0' && rectype <= '9') {
 			char * tok = strtok(s," \t\f\n\r");
-			int i = 0;
-			//fill a stub if any
-			if (stack.empty())
-			  for (; tok && i < root_level;
-					tok=strtok(0," \t\f\n\r"), i++	)
-				stack.emplace_back(LevelScaffold(tok,0));
-			//skip continuing levels
-			for (; tok && i<stack.size() && 
-				!strcmp(tok, stack[i].token.c_str());
-				tok=strtok(0," \t\f\n\r"), i++) ;
-			for (; stack.size() > std::max(i,root_level); stack.pop_back())
+				int i = rectype - '0' - root_level;
+			//first time simply ignore "underground" levels
+			if (i < 1 && stack.size() <= 1)
+			  while (i < 1 && tok) {tok = strtok(0," \t\f\n\r"); i++;}
+			for (; stack.size() > std::max(i,1); stack.pop_back())
 				//Merge finished levels into their ancestors
-				(stack.size()>root_level+1? stack[stack.size()-2]:root_s) << std::move(stack.back().store(root_level?0:keep_level_occ_num_thereshold));
-			if (i < root_level) break;
+				stack[stack.size()-2] << std::move(stack.back().store(root_level?0:keep_level_occ_num_thereshold));
+			if (i < 1) break;
 			for (; tok; tok = strtok(0," \t\f\n\r")) {
-				auto &siblings = (stack.size()>root_level?stack.back():root_s).children;
+				auto &siblings = stack.back().children;
 				auto i = canonical_string.insert(tok);
 				siblings.emplace_back( start_pos,i.first -> c_str() );
 				stack.emplace_back(LevelScaffold(tok,&siblings.back()));
-				++stack.back().occurrences.insert(std::pair<unsigned int,unsigned int>(base_year-year,0)).first->second;
 			}
+			if (tail) read_occurrences(tail, stack );
 			start_pos = ftell(f);
 		}
-		root_s.store(0);
+		else if (rectype == '<') {
+			char* tok = strtok(s," \t\f\n\r");
+					if (tail) read_occurrences(tail, stack.back().prefix_tf[canonical_string.insert(tok).first
+ -> c_str() ]);
+					if (strtok(0," \t\f\n\r")) {
+						static int n_lookbehind_extra_token = 0;
+						std::cerr << "Catrie DB error: extra_token in lookbehind" << std::endl;
+					}
+				}
+		}
+		stack.front().store(0);
 }
 
 #define MAX_NGRAM (4)
@@ -323,21 +406,33 @@ void query (std::ostream &ostr, DocTrie& t, char *s)
 	std::vector<const char * >v;
 	int len = strlen(s);
 	char* tok=strtok(s," \t\f\n\r") ;
+	bool wildcard = false;
 	while (tok) {
-		auto i = canonical_string.find(tok);
+		wildcard = (tok[0] == '*' && tok[1] == 0);
+		if (!wildcard) {
+			auto i = canonical_string.find(tok);
 		if (i == canonical_string.end()) {
 			ostr << " \"unk\": \"" << tok << "\" }\n";
 			return;
 		}
 		else
 			v.push_back(i->c_str());
+		}
 		tok=strtok(0," \t\f\n\r");
 	}
-	CatMap* qrc = t.query(v.begin(), v.end());
+	auto* qrc = t.query(v.begin(), v.end());
 	if (qrc) {
+		if (wildcard) /* Free end */ {
+			t.cache_children(qrc,v.size());
+			if (qrc->children)
+				for (int c = 0; c < qrc -> n_children; ++c) {
+					ostr << qrc -> children[c].token << " ";
+				}
+		} else { /* A distinct ngram */
+		
 		typedef std::vector<std::pair<unsigned int,unsigned int> > CatVec;
 		CatVec qrcv;
-		qrc->copy(std::insert_iterator<CatVec>(qrcv,qrcv.end()));
+		qrc->value.copy(std::insert_iterator<CatVec>(qrcv,qrcv.end()));
 		ostr << "\"qlen\": " << len << ", \"occ\": [\n";
 		int j = qrcv.size();
 		for (auto &rec: qrcv /*temporary; needs an interface*/ ) {
@@ -345,6 +440,7 @@ void query (std::ostream &ostr, DocTrie& t, char *s)
 			ostr << "\n";
 		}
 		ostr << "]";
+	}
 	}
 	ostr << "}" << std::endl;
 }
@@ -442,7 +538,7 @@ int main (int argc, char** argv) {
 	for (int i=1; i<argc; i++)
 		if (argv[i][0]!='-')
 			//load_text_from_file (t,argv[i]);
-			load_from_sorted_occ_file(ng_file = fopen(argv[i],"rt"), &t.root, 0);
+			load_from_sorted_structured_occ_file(ng_file = fopen(argv[i],"rt"), &t.root, 0);
 		else switch (argv[i][1]) {
 			case 'p': port=atoi(arg_value(i, argv, argc)); break;
 		}
