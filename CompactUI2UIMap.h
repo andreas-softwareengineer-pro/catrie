@@ -54,7 +54,8 @@ template <typename K, typename V>
 class CompactUI2UIMap {
 	char *q;
 public:
-	CompactUI2UIMap(const  std::map<K,V> & m) {
+	template<class V0>
+	CompactUI2UIMap(const  std::map<K,V0> & m) {
 		bool last_flag = true;
 		K last_key = ~K(0U);
 		size_t bufsize;
