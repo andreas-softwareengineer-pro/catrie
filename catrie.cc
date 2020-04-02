@@ -88,8 +88,8 @@ public:
 		}
 	return true;	
 	}
-	CacheControl(const U& _dispose, size_t _capacity)
-		:dispose(_dispose), curr_stamp(0U), capacity(_capacity) {}
+	CacheControl(/*const U& _dispose, */size_t _capacity)
+		:/*dispose(_dispose), */curr_stamp(0U), capacity(_capacity) {}
 };
 
 size_t trie_cache_capacity = 40000;
@@ -183,7 +183,7 @@ public:
 	int  total_entries() {
 		return root.total_entries();
 	}
-	Trie() : root(0U, ""), cache(Node::uncache_content, trie_cache_capacity) {}
+	Trie() : root(0U, ""), cache(/* Node::uncache_content, */  trie_cache_capacity) {}
 };
 
 std::unordered_set<std::string> canonical_string;
