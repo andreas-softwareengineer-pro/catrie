@@ -1,10 +1,12 @@
-#include <unistd.h> 
+// Catrie, a trie-based categorized n-gram TF-IDF search service
+// Author: Andrei (Andreas) Scherbakov (andreas@softwareengineer.pro)
+
+include <unistd.h> 
 #include <stdio.h> 
 #include <sys/socket.h> 
 #include <stdlib.h> 
 #include <netinet/in.h> 
 #include <string.h> 
-//#define PORT 8080 
 #include <map>
 #include <list>
 #include <unordered_map>
@@ -28,9 +30,46 @@ struct CatValue {
 		tf +=  other.tf;
 		df += other.df;
 	}
-	//temporary hack
-	operator int() const {return tf;}
+	struct CompactAdapter {
+		bool writable(const CatValue& x) {return x.tf;}
+		bool want_produce(const CatValue& x, int i) {
+			return i < ((x.tf <= 1) ? 0: ((x.df != x.tf)? 2 : 1) );
+		}
+		unsigned long produce(const CatValue& x, int i) {
+			return (i > 0)? x.df: x.tf;
+		}
+		bool can_set(const CatValue& x, int i, int v) {
+			return i <= 1 && (i == 0 ||  x.tf != 1);
+		}			
+		void set_done(CatValue& x, int n) {
+			if (n < 1) x.tf = 1;
+			if (n < 2) x.df = x.tf;
+		}
+		void set(CatValue& x, int i, unsigned long v) {
+			(i? x.df : x.tf) = v;
+		}
+		typedef unsigned int itype;
+	};
 };
+
+	struct TFCompactAdapter {
+		bool writable(const unsigned int& x) {return x;}
+		bool want_produce(const unsigned int& x, int i) {return i < ((x <= 1)? 0: 1);}
+		unsigned long produce(const unsigned int& x, int _i) {
+			return x;
+		}
+		void set_done(unsigned int& x, int n) {
+			if (n < 1) x = 1;
+		}		
+		bool can_set(unsigned int& x, int i, unsigned int v) {
+			return i<1;
+		}
+		void set(unsigned int& x, int i, unsigned int v) {
+			x = v;
+		}
+		typedef unsigned int itype;
+	};
+
 std::ostream& operator << (std::ostream& ostr, const CatValue& x) {
 	return ostr<<"\"tf\": " << x.tf << ", \"df\": " << x.df;}
 
@@ -52,7 +91,8 @@ std::ostream& operator << (std::ostream& ostr, const CatValue& x) {
 
 typedef FlexibleMap<CatKey,CatValue> CatMap;
 */
-typedef CompactUI2UIMap<unsigned int,unsigned int> CatMap;
+typedef CompactUI2UIMap<unsigned int,CatValue, CatValue::CompactAdapter> CatMap;
+typedef CompactUI2UIMap<unsigned int,unsigned int, TFCompactAdapter> LookbehindMap;
 typedef std::pair<CatKey,CatValue> CatRec;
 
 size_t max_cached_subtries = (1 << 15);
@@ -97,11 +137,17 @@ size_t keep_level_occ_num_thereshold = 40000;
 
 template <class K, class V>
 struct Trie {
+	struct LookbehindNode {
+		K token;
+		LookbehindMap tf;
+	};
 	struct Node {
 		//std::map<K,Node> children;
 		long int start_pos;
 		Node *children;
 		int n_children;
+		LookbehindNode *prefix_tf;
+		int n_prefix_tf;
 		K token;
 		V value;
 		void uncache_content() {
@@ -118,10 +164,13 @@ struct Trie {
 				rc += children[i].total_entries();
 			return rc + 1; // value
 		}
-		Node(long int _start_pos, K k) : start_pos(_start_pos),token(k), value(), children(0), n_children(0) {}
+		Node(long int _start_pos, K k) : start_pos(_start_pos),token(k), value(), children(0), n_children(0), prefix_tf(0), n_prefix_tf(0) {}
 		Node(Node&& other) {
+			prefix_tf = other.prefix_tf;
+			other.prefix_tf = 0;
 			children = other.children;
 			other.children = 0;
+			n_prefix_tf = other.n_prefix_tf;
 			n_children = other.n_children;
 			token = std::move(other.token);
 			value = std::move(other.value);
@@ -156,7 +205,7 @@ public:
 		n -> value.i += incr;
 	}
 	void cache_children(Node* n, int level) {	
-			if (!n->children && n->n_children
+			if ((!n->children && n->n_children || !n->prefix_tf && n->n_prefix_tf)
 				// needs download?
 				&& cache.insert(n))
 					//2 a more generic way!
@@ -207,6 +256,9 @@ struct LevelScaffold {
 			for (auto &yo: child.occurrences)
 				//only propagate tf; df should be already counted at all levels
 				occurrences.insert(std::pair<CatKey,CatValue>(yo.first,{})).first->second.tf+=yo.second.tf;
+			for (auto &pref: child.prefix_tf)
+			for (auto &yo: pref.second)
+				prefix_tf[pref.first].insert(std::pair<CatKey, unsigned int>(yo.first,0U)).first->second+=yo.second;
 		return *this;
 	}
 
@@ -226,6 +278,18 @@ struct LevelScaffold {
 			int i = 0;
 			for (auto&& e: children) {
 				new(trie_elem->children+(i++))DocTrie::Node(std::move(e)); 
+			}
+		}
+		trie_elem->n_prefix_tf = prefix_tf.size();
+		if (!dispose && trie_elem->n_prefix_tf)
+		{
+			trie_elem->	prefix_tf = (DocTrie::LookbehindNode*) malloc(trie_elem->n_prefix_tf * sizeof(DocTrie::LookbehindNode) );
+			int i = 0;
+			for (auto& e: prefix_tf) {
+				auto& rec = trie_elem->prefix_tf[i++];
+				new(&rec) DocTrie::LookbehindNode();
+				rec.token = e.first;
+				rec.tf = LookbehindMap(e.second);
 			}
 		}
 		return *this;
@@ -248,7 +312,8 @@ static void read_occurrences(char* & s, std::vector<LevelScaffold>& stack)
 			f = std::strtol(s,&e,0);
 			if (s==e) f = 1;
 			s=e;
-			if (*s == '/') {
+	}
+		if (*s == '/') {
 				s++;
 				df = std::strtol(s,&e,0);
 				if (s==e) df = f;
@@ -273,16 +338,18 @@ static void read_occurrences(char* & s, std::vector<LevelScaffold>& stack)
 				f = df;
 				}
 			}
-		} else {
-					static int n_ex_occurrences = 0;
-					if (!n_ex_occurrences++) std::cerr<<("DB format error: tf/idf is missing (a semicolon is expected)"); 
-		}
+//		} else {
+//					static int n_ex_occurrences = 0;
+//					if (!n_ex_occurrences++) std::cerr<<("DB format error: tf/idf is missing (a semicolon is expected)"); 
+//		}
 	}
 	while (*s == ',' && *++s);
 }
 
 static void read_occurrences(char* & s, std::map<CatKey,unsigned int>& fmap)
 {
+	do
+	{
 		char* e; //->pos_t !!
 		int year = std::strtol(s,&e,0);
 		s=e;
@@ -294,6 +361,8 @@ static void read_occurrences(char* & s, std::map<CatKey,unsigned int>& fmap)
 			s=e;
 		}
 		fmap.insert(std::pair<CatKey,unsigned>(base_year-year,0U)).first->second+=f;
+	}
+	while (*s == ',' && *++s);
 }
 
 void load_from_sorted_structured_occ_file(FILE* f,
@@ -356,6 +425,30 @@ void load_from_sorted_structured_occ_file(FILE* f,
 		stack.front().store(0);
 }
 
+std::ostream& print_tf_idf(std::ostream& ostr, const CatMap& freq_map) {
+		typedef std::vector<std::pair<unsigned int,CatValue > > CatVec;
+		CatVec v;
+		freq_map.copy(std::insert_iterator<CatVec>(v,v.end()));
+		int j = v.size();
+		for (auto &rec: v /*temporary; needs an interface*/ ) {
+			ostr << " { \"year\": " << base_year-rec.first << ", \"tf\": " << rec.second.tf << ", \"df\": " << rec.second.df << " }" ;
+			ostr << (--j? "," : "") << "\n";
+		}
+		return ostr;
+	}
+
+std::ostream& print_tf(std::ostream& ostr, const LookbehindMap& freq_map) {
+		typedef std::vector<std::pair<unsigned int,unsigned int> > CatVec;
+		CatVec v;
+		freq_map.copy(std::insert_iterator<CatVec>(v,v.end()));
+		int j = v.size();
+		for (auto &rec: v /*temporary; needs an interface*/ ) {
+			ostr << " { \"year\": " << base_year-rec.first << ", \"tf\": " << rec.second << " }" ;
+			ostr << (--j? "," : "") << "\n";
+		}
+		return ostr;
+	}
+
 #define MAX_NGRAM (4)
 #if(0)
 size_t load_text(DocTrie &t, std::vector<const char*>& tokens, short year, size_t max_ngram) {
@@ -406,7 +499,7 @@ void query (std::ostream &ostr, DocTrie& t, char *s)
 	std::vector<const char * >v;
 	int len = strlen(s);
 	char* tok=strtok(s," \t\f\n\r") ;
-	bool wildcard = false;
+	bool wildcard = false, prefix_wildcard = false;
 	while (tok) {
 		wildcard = (tok[0] == '*' && tok[1] == 0);
 		if (!wildcard) {
@@ -417,32 +510,42 @@ void query (std::ostream &ostr, DocTrie& t, char *s)
 		}
 		else
 			v.push_back(i->c_str());
+		} else { /* Wildcard */
+			if (v.empty()) prefix_wildcard = true;
 		}
 		tok=strtok(0," \t\f\n\r");
 	}
 	auto* qrc = t.query(v.begin(), v.end());
 	if (qrc) {
-		if (wildcard) /* Free end */ {
+		ostr<<"\"qlen: \"" << len << ", \"occ\": [\n";
+		print_tf_idf( ostr, qrc -> value);
+		ostr<<"]";
+		if (wildcard) /* Write suffix TF/DF list */ {
+
 			t.cache_children(qrc,v.size());
+			ostr<<",\nsuffix: [\n";
 			if (qrc->children)
 				for (int c = 0; c < qrc -> n_children; ++c) {
-					ostr << qrc -> children[c].token << " ";
+					ostr<<"tok: \"" << qrc -> children[c].token << "\", occ: [\n";
+					print_tf_idf(ostr, qrc -> children[c].value);
+					ostr<<"]\n";
 				}
-		} else { /* A distinct ngram */
-		
-		typedef std::vector<std::pair<unsigned int,unsigned int> > CatVec;
-		CatVec qrcv;
-		qrc->value.copy(std::insert_iterator<CatVec>(qrcv,qrcv.end()));
-		ostr << "\"qlen\": " << len << ", \"occ\": [\n";
-		int j = qrcv.size();
-		for (auto &rec: qrcv /*temporary; needs an interface*/ ) {
-			ostr << " { \"year\": " << base_year-rec.first << ", \"tf\": " << rec.second << " }" ;
-			ostr << (--j? "," : "") << "\n";
+		ostr<<"]";
 		}
-		ostr << "]";
+		if (prefix_wildcard) { /* Free prefix TF list */
+			t.cache_children(qrc,v.size());
+			ostr<<",\nprefix: [\n";
+			if (qrc->prefix_tf)
+				for (int c = 0; c < qrc -> n_prefix_tf; ++c) {
+					ostr<<"tok: \"" << qrc->prefix_tf[c].token << "\", occ: [\n";
+					print_tf(ostr, qrc->prefix_tf[c].tf);
+					ostr<<"]\n";
+				}
+		ostr<<"]";
+		}
+		
 	}
-	}
-	ostr << "}" << std::endl;
+	ostr << "\n}" << std::endl;
 }
 
 int serve_port(DocTrie& t, int port) 

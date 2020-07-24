@@ -50,7 +50,7 @@ void read_varbyte_num(I &v, const char* &p, bool &flag) {
 		v|=(*p++ & 0x3f) << i, i+=6;
 }
  
-template <typename K, typename V>
+template <typename K, typename V, class Adapter>
 class CompactUI2UIMap {
 	char *q;
 public:
@@ -59,15 +59,22 @@ public:
 		bool last_flag = true;
 		K last_key = ~K(0U);
 		size_t bufsize;
-		char buffer[bufsize = (2 + 8 * (sizeof(K) + sizeof(V)) / 6) * m.size() + 1],
+		Adapter ada;
+		char buffer[bufsize = 5* (2 + 8 * (sizeof(K) + sizeof(V)) / 6) * m.size() + 1],
 			*p=buffer;
 		for (auto & r: m)
-			if (r.second>0) {
-				if (r.second == 1U || r.first!=last_key+1 || !last_flag) {
+			if (ada.writable(r.second)) {
+				bool w = ada.want_produce(r.second,0);
+				if (!w || r.first!=last_key+1 || !last_flag) {
 					append_varbyte_num(r.first-last_key,p,last_flag=false);
 				}
-				if (r.second > 1U)
-					append_varbyte_num(r.second-1U, p, last_flag=true);
+				for (int i = 0; w; w = ada.want_produce(r.second, ++i)) {
+					auto v = ada.produce(r.second, i);
+#ifdef TEST_COMPACT_UI2UI_ADAPTER
+					assert(ada.can_set(r.second, i, v));
+#endif
+					append_varbyte_num(v, p, last_flag=true);
+				}
 				last_key = r.first;
 			}
 		*p++ = 0;
@@ -77,35 +84,44 @@ public:
 	}
 	CompactUI2UIMap() : q(0) {}
 
-	template<class InsertIterator> void copy(InsertIterator ii) {
-		std::pair<K, V> out_elem(~K(0U),0U);
+	template<class OutputIterator> void copy(OutputIterator ii) const {
+		std::pair<K, V> elem(~K(0U),{});
 		const char* p=q;
+		Adapter ada;
 		bool flag;
 		bool key_pending = false;
 		typename std::conditional<
-            (sizeof(K) <= sizeof(V)), V, K >::type n;
-		if (p)
-		while (*p)
+			(sizeof(K) <= sizeof(typename Adapter::itype)), typename Adapter::itype, K >::type v;
+		int i = 0, c = 0;
+		if (p) while (*p)
 		{
-			read_varbyte_num(n,p,flag);
+			read_varbyte_num(v,p,flag);
 			if (flag) {
-				//xtra value
-				out_elem.second = n+1U;
-				if (!key_pending) ++out_elem.first;
-				*ii = out_elem;
+				
+				if (!ada.can_set(elem.second,i,v)) {
+							ada.set_done(elem.second,i); i = 0;
+							++elem.first;
+							*ii++ = elem;
+							//Auto increment key
+							++elem.first; elem.second.~V(); new(&elem.second) V();
+							c++;
+				}
+						//xtra value for the current record
+				ada.set(elem.second,i++,v);
 			} else {
 				//key increment
-				if (key_pending) {
-					out_elem.second = 1U;
-					*ii = out_elem;
+				if (c) {
+					ada.set_done(elem.second,i); i = 0;
+					*ii++ = elem;
+					elem.second.~V(); new(&elem.second) V();
 				}
-				out_elem.first += n;
+				elem.first += v;
 			}
-			key_pending = !flag;
+			++c;
 		}
-		if (key_pending) {
-			out_elem.second = 1U;
-			*ii = out_elem;
+		if (c) {
+			ada.set_done(elem.second,i);
+			*ii++ = elem;
 		}
 	}				
 	CompactUI2UIMap & operator = (CompactUI2UIMap&& other) {
