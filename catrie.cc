@@ -1,7 +1,7 @@
 // Catrie, a trie-based categorized n-gram TF-IDF search service
 // Author: Andrei (Andreas) Scherbakov (andreas@softwareengineer.pro)
 
-include <unistd.h> 
+#include <unistd.h> 
 #include <stdio.h> 
 #include <sys/socket.h> 
 #include <stdlib.h> 
