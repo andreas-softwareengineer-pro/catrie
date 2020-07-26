@@ -401,7 +401,8 @@ void load_from_sorted_structured_occ_file(FILE* f,
 			  while (i < 1 && tok) {tok = strtok(0," \t\f\n\r"); i++;}
 			for (; stack.size() > std::max(i,1); stack.pop_back())
 				//Merge finished levels into their ancestors
-				stack[stack.size()-2] << std::move(stack.back().store(root_level?0:keep_level_occ_num_thereshold));
+				//stack[stack.size()-2] << std::move(stack.back().store(root_level?0:keep_level_occ_num_thereshold));
+				stack[stack.size()-2] << std::move(stack.back().store(keep_level_occ_num_thereshold));
 			if (i < 1) break;
 			for (; tok; tok = strtok(0," \t\f\n\r")) {
 				auto &siblings = stack.back().children;
