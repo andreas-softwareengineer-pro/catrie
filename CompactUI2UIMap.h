@@ -125,20 +125,21 @@ public:
 		}
 	}				
 	CompactUI2UIMap & operator = (CompactUI2UIMap&& other) {
-		if (q) free(q);
+		free(q);
 		q=other.q; other.q=0;
 		return *this;
 	}
 	CompactUI2UIMap(const CompactUI2UIMap& other) {
 		//string like
 		free(q);
+		q=0;
 		if (other.q) {
 			q=(char*)malloc(strlen(other.q))+1;
 			strcpy(q,other.q);}
 		else q=0;
 	}
 	CompactUI2UIMap(CompactUI2UIMap&& other) {
-		q = 0;
+		free(q);
 		*this = *other;
 		other.q = 0;
 	}
