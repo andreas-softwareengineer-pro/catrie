@@ -306,7 +306,7 @@ static size_t occ_record_fanout_limit = 10;
 typedef Trie<const char*,CatMap> DocTrie;
 
 struct LevelScaffold {
-	std::string token;
+	//std::string token;
 	int n_occ, n_occ_record;
 	std::map<CatKey,CatValue> occurrences;
 	std::map<const char*,std::map<CatKey, unsigned int> > prefix_tf;
@@ -358,7 +358,7 @@ struct LevelScaffold {
 		return *this;
 	}
 	LevelScaffold(const char* _token, DocTrie::Node* _trie_elem)
-		:	token(_token), trie_elem(_trie_elem),
+		:	/* token(_token), */ trie_elem(_trie_elem),
 			n_occ(0), n_occ_record(0) {}
 };
 	
