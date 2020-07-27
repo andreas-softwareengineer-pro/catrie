@@ -19,6 +19,7 @@
 #include <functional>
 #include <algorithm>
 #include "CompactUI2UIMap.h"
+#include <cstddef>
 
 typedef unsigned int CatKey; // years ago
 struct CatValue {
