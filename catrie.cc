@@ -260,9 +260,11 @@ struct AddOnlyStringHashSet {
 	Entry* find_entry(const char* s) {
 		unsigned long h = hash((unsigned char *)s) % space;
 		Entry* entry = t[h];
-		while (entry)
+		while (entry) {
 			if (!strcmp(s,entry->str)) return entry;
-		return 0;
+			entry = entry->next;
+		}
+	return 0;
 	}
 	
 	const char* find(const char* s) {
