@@ -235,7 +235,67 @@ public:
 	Trie() : root(0U, ""), cache(/* Node::uncache_content, */  trie_cache_capacity) {}
 };
 
-std::unordered_set<std::string> canonical_string;
+
+
+const int space = 1<<22;
+struct AddOnlyStringHashSet {
+	//djb hash function
+	unsigned long hash(unsigned char *str)
+	{
+	    unsigned long hash = 5381;
+	    int c;
+	
+	    while (c = *str++)
+	        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+	
+	    return hash;
+	}
+	struct Entry {
+		Entry* next;
+		char str [1];
+	};
+	Entry* t[space];
+	
+	Entry* find_entry(const char* s) {
+		unsigned long h = hash((unsigned char *)s) % space;
+		Entry* entry = t[h];
+		while (entry)
+			if (!strcmp(s,entry->str)) return entry;
+		return 0;
+	}
+	
+	const char* find(const char* s) {
+		Entry* entry = find_entry(s);
+		return entry? entry->str: 0; 
+	}
+
+	const char* insert(const char* s) {
+		unsigned long h = hash((unsigned char *)s) % space;
+		Entry* entry = find_entry(s);
+		if (!entry) {
+			entry = (Entry*)(malloc(offsetof(struct Entry, str)+strlen(s)+1));
+			entry->next = t[h];
+			t[h] = entry;
+			strcpy(entry->str,s);
+		}
+		return entry->str;
+	}
+	
+	AddOnlyStringHashSet() {std::fill(t,t+space,(Entry*)0);}
+	~AddOnlyStringHashSet() {
+		for (unsigned long j=0; j<space; ++j) {
+			Entry* entry= t[j];
+			while (entry) {
+				Entry* nxt = entry->next;
+				free(entry);
+				entry = nxt;
+			}
+		}
+	}
+};
+ 
+
+AddOnlyStringHashSet canonical_string;
 
 static unsigned base_year;
 static size_t occ_record_fanout_limit = 10;
@@ -405,8 +465,8 @@ void load_from_sorted_structured_occ_file(FILE* f,
 			if (i < 1) break;
 			for (; tok; tok = strtok(0," \t\f\n\r")) {
 				auto &siblings = stack.back().children;
-				auto i = canonical_string.insert(tok);
-				siblings.emplace_back( start_pos,i.first -> c_str() );
+				const char* can_tok = canonical_string.insert(tok);
+				siblings.emplace_back( start_pos,can_tok );
 				stack.emplace_back(LevelScaffold(tok,&siblings.back()));
 			}
 			if (tail) read_occurrences(tail, stack );
@@ -414,8 +474,7 @@ void load_from_sorted_structured_occ_file(FILE* f,
 		}
 		else if (rectype == '<') {
 			char* tok = strtok(s," \t\f\n\r");
-					if (tail) read_occurrences(tail, stack.back().prefix_tf[canonical_string.insert(tok).first
- -> c_str() ]);
+					if (tail) read_occurrences(tail, stack.back().prefix_tf[canonical_string.insert(tok)]);
 					if (strtok(0," \t\f\n\r")) {
 						static int n_lookbehind_extra_token = 0;
 						std::cerr << "Catrie DB error: extra_token in lookbehind" << std::endl;
@@ -449,50 +508,6 @@ std::ostream& print_tf(std::ostream& ostr, const LookbehindMap& freq_map) {
 		return ostr;
 	}
 
-#define MAX_NGRAM (4)
-#if(0)
-size_t load_text(DocTrie &t, std::vector<const char*>& tokens, short year, size_t max_ngram) {
-	std::unordered_set<CatMap*> this_doc_grams;
-	for (int i=0; i<tokens.size(); ++i) {
-				std::vector<CatMap*> e_seq;
-				t.insert(tokens.begin()+i, tokens.begin()+std::min(i+max_ngram,tokens.size()),
-					e_seq);
-				for (auto *e : e_seq)
-					*e += CatRec{year,CatValue{1,this_doc_grams.insert(e).second ? 1 : 0}};
-	}
-}
-
-void nop(DocTrie& t, std::string filename){}
-
-void load_text_from_file(DocTrie& t, std::string filename){
-	std::ifstream ifs (filename);
-	std::string str;
-	char buff[80000];
-	while (ifs.getline(buff,80000))
-	{
-		char* s = buff;
-		short year = 0;
-		std::vector<const char * > tokens;
-
-		char* token=strtok(s," \t\f\r\n");
-		while (token)
-		{	
-				if (!strcmp(token, "|||||")) {
-					token = strtok(0," \t\f\n\r");
-					year = atoi(token);
-					break;
-			}
-			auto i = canonical_string.insert(token);
-			tokens.push_back(i.first->c_str());
-			//tokens.push_back(token);
-			token=strtok(0," \t\f\r\n");
-		}
-		load_text(t, tokens, year, MAX_NGRAM); 
-		
-	}  
-}
-#endif
-
 void query (std::ostream &ostr, DocTrie& t, char *s)
 {
 	ostr << "{";
@@ -503,13 +518,13 @@ void query (std::ostream &ostr, DocTrie& t, char *s)
 	while (tok) {
 		wildcard = (tok[0] == '*' && tok[1] == 0);
 		if (!wildcard) {
-			auto i = canonical_string.find(tok);
-		if (i == canonical_string.end()) {
+			const char* can_tok = canonical_string.find(tok);
+		if (!can_tok) {
 			ostr << " \"unk\": \"" << tok << "\" }\n";
 			return;
 		}
 		else
-			v.push_back(i->c_str());
+			v.push_back(can_tok);
 		} else { /* Wildcard */
 			if (v.empty()) prefix_wildcard = true;
 		}
