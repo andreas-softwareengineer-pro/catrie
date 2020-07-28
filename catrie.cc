@@ -267,6 +267,7 @@ struct AddOnlyStringHashSet {
 	return 0;
 	}
 	
+	char word_memory[10000000], *curr_alloc_p;
 	const char* find(const char* s) {
 		Entry* entry = find_entry(s);
 		return entry? entry->str: 0; 
@@ -276,7 +277,9 @@ struct AddOnlyStringHashSet {
 		unsigned long h = hash((unsigned char *)s) % space;
 		Entry* entry = find_entry(s);
 		if (!entry) {
-			entry = (Entry*)(malloc(offsetof(struct Entry, str)+strlen(s)+1));
+			/*entry = (Entry*)(malloc(offsetof(struct Entry, str)+strlen(s)+1));*/
+			entry = (Entry*)curr_alloc_p;
+			curr_alloc_p += offsetof(struct Entry, str)+strlen(s)+1;
 			entry->next = t[h];
 			t[h] = entry;
 			strcpy(entry->str,s);
@@ -284,7 +287,7 @@ struct AddOnlyStringHashSet {
 		return entry->str;
 	}
 	
-	AddOnlyStringHashSet() {std::fill(t,t+space,(Entry*)0);}
+	AddOnlyStringHashSet() {curr_alloc_p=word_memory; std::fill(t,t+space,(Entry*)0);}
 	~AddOnlyStringHashSet() {
 		for (unsigned long j=0; j<space; ++j) {
 			Entry* entry= t[j];
@@ -535,7 +538,7 @@ void query (std::ostream &ostr, DocTrie& t, char *s)
 	}
 	auto* qrc = t.query(v.begin(), v.end());
 	if (qrc) {
-		ostr<<"\"qlen: \"" << len << ", \"occ\": [\n";
+		ostr<<"\"qlen\": " << len << ", \"occ\": [\n";
 		print_tf_idf( ostr, qrc -> value);
 		ostr<<"]";
 		if (wildcard) /* Write suffix TF/DF list */ {
