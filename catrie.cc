@@ -6,6 +6,7 @@
 #include <sys/socket.h> 
 #include <stdlib.h> 
 #include <netinet/in.h> 
+#include <sys/mman.h> 
 #include <string.h> 
 #include <map>
 #include <list>
@@ -300,6 +301,56 @@ struct AddOnlyStringHashSet {
 	}
 };
  
+#define page_size (1<<20)
+class PageShop {
+	
+	char* alloc_p;
+	std::vector <std::pair<char*,size_t> > pages;
+	char* alloc_e;
+
+	public:
+	void *allocate(size_t size) {
+		if (alloc_p + size > alloc_e) {
+			size_t alloc_size = ((size-1) / page_size + 1)*page_size;
+			alloc_p = (char*) mmap(0, alloc_size, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1,0);
+			std::cerr << "Memory alloation failed in PageShop" << std::endl;
+			pages.emplace_back(alloc_p, alloc_size);
+			alloc_e = alloc_p + alloc_size;
+		}
+		void* rc = alloc_p;
+		alloc_p+=size;
+		return rc;
+	}
+	void deallocateAll() {
+		while (pages.size() > 1) //leave the first one allocated
+		{
+			munmap(pages.back().first,pages.back().second);
+			pages.pop_back();	
+		}
+		alloc_p = pages[0].first;
+		alloc_e = alloc_p+page_size;
+	}
+	PageShop() : alloc_p((char*)mmap(0, page_size, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1,0)),
+		pages(1,{alloc_p,page_size}), alloc_e(alloc_p+page_size) {}
+	~PageShop() {
+		while (pages.size())
+		{
+			munmap(pages.back().first,pages.back().second);
+			pages.pop_back();	
+		}	
+	}
+
+};
+
+template <class T>
+struct PageAllocator {
+	PageShop & shop;
+	typedef T value_type;
+	T *allocate(size_t size, void* _hint = 0) const {return (T*) shop.allocate(size*sizeof(value_type));}
+	void deallocate(T *ptr, size_t size) const { /* do nothing */  }
+	PageAllocator(PageShop & _shop) :shop(_shop) {}
+	template <class O> PageAllocator(const PageAllocator<O> & _a) :shop(_a.shop) {}
+};
 
 AddOnlyStringHashSet canonical_string;
 
@@ -313,7 +364,8 @@ struct LevelScaffold {
 	int n_occ, n_occ_record;
 	std::map<CatKey,CatValue> occurrences;
 	std::map<const char*,std::map<CatKey, unsigned int> > prefix_tf;
-	std::list<DocTrie::Node> children;	
+	typedef std::list<DocTrie::Node,PageAllocator<DocTrie::Node> > ChildrenList;
+	ChildrenList children;	
 	DocTrie::Node* trie_elem;
 
 	LevelScaffold &operator << (const LevelScaffold& child) {
@@ -360,9 +412,9 @@ struct LevelScaffold {
 		}
 		return *this;
 	}
-	LevelScaffold(const char* _token, DocTrie::Node* _trie_elem)
-		:	/* token(_token), */ trie_elem(_trie_elem),
-			n_occ(0), n_occ_record(0) {}
+	LevelScaffold(DocTrie::Node* _trie_elem, PageShop& _page_shop)
+		:	trie_elem(_trie_elem),
+			n_occ(0), n_occ_record(0), children(_page_shop) {}
 };
 	
 static void read_occurrences(char* & s, std::vector<LevelScaffold>& stack)
@@ -434,9 +486,10 @@ static void read_occurrences(char* & s, std::map<CatKey,unsigned int>& fmap)
 void load_from_sorted_structured_occ_file(FILE* f,
 		DocTrie::Node * root, int root_level)
 	{
+			std::map<int,PageShop> transient_allocator;
 			std::cerr << "Load from pos: " << root->start_pos << ", tree level: " << root_level << std::endl;
 			std::vector<LevelScaffold> stack;
-			stack.emplace_back("", root);
+			stack.emplace_back(root,transient_allocator[0]);
 			
 			long int  start_pos = root -> start_pos;
 			fseek(f,start_pos, SEEK_SET);
@@ -465,7 +518,7 @@ void load_from_sorted_structured_occ_file(FILE* f,
 			//first time simply ignore "underground" levels
 			if (i < 1 && stack.size() <= 1)
 			  while (i < 1 && tok) {tok = strtok(0," \t\f\n\r"); i++;}
-			for (; stack.size() > std::max(i,1); stack.pop_back())
+			for (; stack.size() > std::max(i,1); stack.pop_back(), transient_allocator[stack.size()].deallocateAll())
 				//Merge finished levels into their ancestors
 				stack[stack.size()-2] << std::move(stack.back().store(root_level?0:keep_level_occ_num_thereshold));
 			if (i < 1) break;
@@ -473,7 +526,7 @@ void load_from_sorted_structured_occ_file(FILE* f,
 				auto &siblings = stack.back().children;
 				const char* can_tok = canonical_string.insert(tok);
 				siblings.emplace_back( start_pos,can_tok );
-				stack.emplace_back(LevelScaffold(tok,&siblings.back()));
+				stack.emplace_back(&siblings.back(),transient_allocator[stack.size()]);
 			}
 			if (tail) read_occurrences(tail, stack );
 			start_pos = ftell(f);
