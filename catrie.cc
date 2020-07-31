@@ -237,70 +237,6 @@ public:
 	Trie() : root(0U, ""), cache(/* Node::uncache_content, */  trie_cache_capacity) {}
 };
 
-
-
-const int space = 1<<22;
-struct AddOnlyStringHashSet {
-	//djb hash function
-	unsigned long hash(unsigned char *str)
-	{
-	    unsigned long hash = 5381;
-	    int c;
-	
-	    while (c = *str++)
-	        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
-	
-	    return hash;
-	}
-	struct Entry {
-		Entry* next;
-		char str [1];
-	};
-	Entry* t[space];
-	
-	Entry* find_entry(const char* s) {
-		unsigned long h = hash((unsigned char *)s) % space;
-		Entry* entry = t[h];
-		while (entry) {
-			if (!strcmp(s,entry->str)) return entry;
-			entry = entry->next;
-		}
-	return 0;
-	}
-	
-	char word_memory[10000000], *curr_alloc_p;
-	const char* find(const char* s) {
-		Entry* entry = find_entry(s);
-		return entry? entry->str: 0; 
-	}
-
-	const char* insert(const char* s) {
-		unsigned long h = hash((unsigned char *)s) % space;
-		Entry* entry = find_entry(s);
-		if (!entry) {
-			/*entry = (Entry*)(malloc(offsetof(struct Entry, str)+strlen(s)+1));*/
-			entry = (Entry*)curr_alloc_p;
-			curr_alloc_p += offsetof(struct Entry, str)+strlen(s)+1;
-			entry->next = t[h];
-			t[h] = entry;
-			strcpy(entry->str,s);
-		}
-		return entry->str;
-	}
-	
-	AddOnlyStringHashSet() {curr_alloc_p=word_memory; std::fill(t,t+space,(Entry*)0);}
-	~AddOnlyStringHashSet() {
-		for (unsigned long j=0; j<space; ++j) {
-			Entry* entry= t[j];
-			while (entry) {
-				Entry* nxt = entry->next;
-				free(entry);
-				entry = nxt;
-			}
-		}
-	}
-};
- 
 #define page_size (1<<20)
 class PageShop {
 	
@@ -346,12 +282,84 @@ template <class T>
 struct PageAllocator {
 	PageShop & shop;
 	typedef T value_type;
+        template <class Type> struct rebind {
+  typedef PageAllocator<Type> other;
+};
+ typedef T* pointer;
+ typedef const T* const_pointer;
+ typedef T& reference;
+ typedef const T& const_reference;
+void destroy(T* p) {((T*)p)->~T();}
+void construct( pointer p, const_reference val ) {new((void *)p) T(val);}
 	T *allocate(size_t size, void* _hint = 0) const {return (T*) shop.allocate(size*sizeof(value_type));}
 	void deallocate(T *ptr, size_t size) const { /* do nothing */  }
 	PageAllocator(PageShop & _shop) :shop(_shop) {}
 	template <class O> PageAllocator(const PageAllocator<O> & _a) :shop(_a.shop) {}
 };
 
+
+
+const int space = 1<<22;
+struct AddOnlyStringHashSet {
+	//djb hash function
+	unsigned long hash(unsigned char *str)
+	{
+	    unsigned long hash = 5381;
+	    int c;
+	
+	    while (c = *str++)
+	        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+	
+	    return hash;
+	}
+	struct Entry {
+		Entry* next;
+		char str [1];
+	};
+	Entry* t[space];
+	
+	Entry* find_entry(const char* s) {
+		unsigned long h = hash((unsigned char *)s) % space;
+		Entry* entry = t[h];
+		while (entry) {
+			if (!strcmp(s,entry->str)) return entry;
+			entry = entry->next;
+		}
+	return 0;
+	}
+	
+	PageShop word_memory;
+	const char* find(const char* s) {
+		Entry* entry = find_entry(s);
+		return entry? entry->str: 0; 
+	}
+
+	const char* insert(const char* s) {
+		unsigned long h = hash((unsigned char *)s) % space;
+		Entry* entry = find_entry(s);
+		if (!entry) {
+			/*entry = (Entry*)(malloc(offsetof(struct Entry, str)+strlen(s)+1));*/
+			entry = (Entry*)word_memory.allocate(offsetof(struct Entry, str)+strlen(s)+1);
+			entry->next = t[h];
+			t[h] = entry;
+			strcpy(entry->str,s);
+		}
+		return entry->str;
+	}
+	
+	AddOnlyStringHashSet() {std::fill(t,t+space,(Entry*)0);}
+	~AddOnlyStringHashSet() {
+//		for (unsigned long j=0; j<space; ++j) {
+//			Entry* entry= t[j];
+//			while (entry) {
+//				Entry* nxt = entry->next;
+//				free(entry);
+//				entry = nxt;
+//			}
+//		}
+	}
+};
+ 
 AddOnlyStringHashSet canonical_string;
 
 static unsigned base_year;
@@ -533,12 +541,12 @@ void load_from_sorted_structured_occ_file(FILE* f,
 		}
 		else if (rectype == '<') {
 			char* tok = strtok(s," \t\f\n\r");
-					if (tail) read_occurrences(tail, stack.back().prefix_tf[canonical_string.insert(tok)]);
-					if (strtok(0," \t\f\n\r")) {
+			if (tail) read_occurrences(tail, stack.back().prefix_tf[canonical_string.insert(tok)]);
+			if (strtok(0," \t\f\n\r")) {
 						static int n_lookbehind_extra_token = 0;
 						std::cerr << "Catrie DB error: extra_token in lookbehind" << std::endl;
 					}
-				}
+			}
 		}
 		stack.front().store(0);
 }
