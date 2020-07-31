@@ -281,16 +281,21 @@ class PageShop {
 template <class T>
 struct PageAllocator {
 	PageShop & shop;
+
+	//Common alocator stuff
 	typedef T value_type;
-        template <class Type> struct rebind {
-  typedef PageAllocator<Type> other;
-};
- typedef T* pointer;
- typedef const T* const_pointer;
- typedef T& reference;
- typedef const T& const_reference;
-void destroy(T* p) {((T*)p)->~T();}
-void construct( pointer p, const_reference val ) {new((void *)p) T(val);}
+	template <class Type> struct rebind {
+	  typedef PageAllocator<Type> other;
+	};
+	typedef T* pointer;
+	typedef const T* const_pointer;
+	typedef T& reference;
+	typedef const T& const_reference;
+	void destroy(T* p) {((T*)p)->~T();}
+	void construct( pointer p, const_reference val ) {new((void *)p) T(val);}
+	template< class U, class... Args >
+	void construct( U* p, Args&&... args ) {::new((void *)p) U(std::forward<Args>(args)...);}
+
 	T *allocate(size_t size, void* _hint = 0) const {return (T*) shop.allocate(size*sizeof(value_type));}
 	void deallocate(T *ptr, size_t size) const { /* do nothing */  }
 	PageAllocator(PageShop & _shop) :shop(_shop) {}
@@ -491,6 +496,8 @@ static void read_occurrences(char* & s, std::map<CatKey,unsigned int>& fmap)
 	while (*s == ',' && *++s);
 }
 
+bool prefix_enabled=false; //Add option to be true
+
 void load_from_sorted_structured_occ_file(FILE* f,
 		DocTrie::Node * root, int root_level)
 	{
@@ -540,6 +547,7 @@ void load_from_sorted_structured_occ_file(FILE* f,
 			start_pos = ftell(f);
 		}
 		else if (rectype == '<') {
+		  if (prefix_enabled) {
 			char* tok = strtok(s," \t\f\n\r");
 			if (tail) read_occurrences(tail, stack.back().prefix_tf[canonical_string.insert(tok)]);
 			if (strtok(0," \t\f\n\r")) {
@@ -547,6 +555,7 @@ void load_from_sorted_structured_occ_file(FILE* f,
 						std::cerr << "Catrie DB error: extra_token in lookbehind" << std::endl;
 					}
 			}
+		  }
 		}
 		stack.front().store(0);
 }
