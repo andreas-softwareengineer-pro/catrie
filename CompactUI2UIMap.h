@@ -56,7 +56,7 @@ class CompactUI2UIMap {
 public:
 	template<class V0>
 	CompactUI2UIMap(const  std::map<K,V0> & m) {
-		bool last_flag = true;
+		bool zero_state = true;
 		K last_key = ~K(0U);
 		size_t bufsize;
 		Adapter ada;
@@ -66,15 +66,20 @@ public:
 		for (auto & r: m)
 			if (ada.writable(r.second)) {
 				bool w = ada.want_produce(r.second,0);
-				if (!w || r.first!=last_key+1 || !last_flag) {
-					append_varbyte_num(r.first-last_key,p,last_flag=false);
+				if (!zero_state || !w || r.first!=last_key+1) {
+					append_varbyte_num(r.first-last_key,p,false);
 				}
-				for (int i = 0; w; w = ada.want_produce(r.second, ++i)) {
+				V mirror;
+				ada.init(mirror);
+				int i = 0;
+				zero_state = false;
+				while (w) {
 					auto v = ada.produce(r.second, i);
-#ifdef TEST_COMPACT_UI2UI_ADAPTER
-					assert(ada.can_set(r.second, i, v));
-#endif
-					append_varbyte_num(v, p, last_flag=true);
+					append_varbyte_num(v, p, true);
+					ada.load(mirror, i, v);
+					++i;
+					w = !(zero_state = ada.hard_stop(mirror, i, v)) && 
+						ada.want_produce(r.second, i);
 				}
 				last_key = r.first;
 			}
@@ -86,44 +91,40 @@ public:
 	CompactUI2UIMap() : q(0) {}
 
 	template<class OutputIterator> void copy(OutputIterator ii) const {
-		std::pair<K, V> elem(~K(0U),{});
 		const char* p=q;
 		Adapter ada;
+		std::pair<K, V> elem(~K(0U),{});
+		ada.init(elem.second);
 		bool last_flag = true, flag;
-		bool key_pending = false;
 		typename std::conditional<
 			(sizeof(K) <= sizeof(typename Adapter::itype)), typename Adapter::itype, K >::type v;
-		int i = 0, c = 0;
+		int i = 0;
+		bool last_hard_stop = false;
+		
 		if (p) while (*p)
 		{
 			read_varbyte_num(v,p,flag);
-			if (flag) {
-				//Auto increment key if needed
-				if (!i && last_flag) ++elem.first;
-
-				if (!ada.can_set(elem.second,i,v)) {
-							ada.set_done(elem.second,i); i = 0;
+			if (!flag && (i || !last_flag) || last_hard_stop)
+			{
+							//deliver an element
 							*ii++ = elem;
-							elem.second.~V(); new(&elem.second) V();
-							++elem.first;
-				}
-						//xtra value for the current record
-				ada.set(elem.second,i++,v);
-			} else {
-				//key increment
-				if (c) {
-					ada.set_done(elem.second,i); i = 0;
-					*ii++ = elem;
-					elem.second.~V(); new(&elem.second) V();
-				}
-				elem.first += v;
+							elem.second.~V(); new(&elem.second) V(); ada.init(elem.second);
+							i = 0;
 			}
-			++c;
+			if (flag) {
+					//Auto increment key if needed
+					if (!i && last_flag) ++elem.first;
+					
+					//Load next value figure
+					ada.load(elem.second, i++, v);
+			} else {
+					elem.first += v;
+			}
 			last_flag=flag;
-			
+			last_hard_stop = i && ada.hard_stop(elem.second,i,v);		
 		}
-		if (c) {
-			ada.set_done(elem.second,i);
+		if (!last_flag || i) {
+			//deliver the last element
 			*ii++ = elem;
 		}
 	}				

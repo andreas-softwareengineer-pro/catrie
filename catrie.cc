@@ -34,20 +34,19 @@ struct CatValue {
 	}
 	struct CompactAdapter {
 		bool writable(const CatValue& x) {return x.tf;}
+		void init(CatValue& x) {
+			x.tf = x.df= 1;
+		}
 		bool want_produce(const CatValue& x, int i) {
-			return i < ((x.tf <= 1) ? 0: ((x.df != x.tf)? 2 : 1) );
+			return i <= ((x.tf <= 1) ? 0: ((x.df > 1)? 2 : 1) );
 		}
 		unsigned long produce(const CatValue& x, int i) {
 			return (i > 0)? x.df: x.tf;
 		}
-		bool can_set(const CatValue& x, int i, int v) {
-			return i <= 1 && (i == 0 ||  x.tf != 1);
+		bool hard_stop(const CatValue& x, int i, unsigned long int v) {
+			return i > 1 || (i > 0 &&  x.tf <= 1);
 		}			
-		void set_done(CatValue& x, int n) {
-			if (n < 1) x.tf = 1;
-			if (n < 2) x.df = x.tf;
-		}
-		void set(CatValue& x, int i, unsigned long v) {
+		void load(CatValue& x, int i, unsigned long v) {
 			(i? x.df : x.tf) = v;
 		}
 		typedef unsigned int itype;
@@ -56,17 +55,17 @@ struct CatValue {
 
 	struct TFCompactAdapter {
 		bool writable(const unsigned int& x) {return x;}
+		void init(unsigned int& x) {
+			x = 1;
+		}
 		bool want_produce(const unsigned int& x, int i) {return i < ((x <= 1)? 0: 1);}
 		unsigned long produce(const unsigned int& x, int _i) {
 			return x;
 		}
-		void set_done(unsigned int& x, int n) {
-			if (n < 1) x = 1;
-		}		
-		bool can_set(unsigned int& x, int i, unsigned int v) {
-			return i<1;
+		bool hard_stop(unsigned int& x, int i, unsigned int v) {
+			return i>=1;
 		}
-		void set(unsigned int& x, int i, unsigned int v) {
+		void load(unsigned int& x, int i, unsigned int v) {
 			x = v;
 		}
 		typedef unsigned int itype;
