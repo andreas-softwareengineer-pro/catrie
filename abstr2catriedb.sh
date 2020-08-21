@@ -30,9 +30,9 @@ function report() {
 		for (year in tf) {
 			t = tf[year]
 			if (c++) printf(",")
-			printf("%d:%d",year,
-				t)			
-			if (year in df) for (lev=apn ; lev >=1 && t ; --lev) {
+			printf("%d",year)
+			if (t>1) printf(":%d",t)			
+			if (year in df) for (lev=apn ; lev >=0 && t ; --lev) {
 				d = df[year][lev];
 				if (d)
 					if (t != d)
@@ -74,7 +74,7 @@ BEGIN {
 	docid = $3
 	year = $4
 	
-	if (!back) for (lev = 1; lev <= an; ++lev) if (!obs[lev][docid]++) df[year][lev]++;
+	if (!back) for (lev = 0; lev <= an; ++lev) if (!obs[lev][docid]++) df[year][lev]++;
 	tf[year]++;
 }
 END { 

@@ -9,9 +9,9 @@ Let k is sorted in an ascending order.
 		ExtraV(v-1)
 Variate byte encoding used:
 		0x00 - terminator
-		0x01..0x7F - 7 least significant bits of DeltaK
+		0x01..0x7F - DeltaK (next 7 bits of DeltaK value)
 		0x80 - reserved
-		0x81..0xBF - 6 least significant bits of ExtraV
+		0x81..0xBF - ExtraV (6 least significant bits = 6 next bits of ExtraV value)
 		0xC0..0xFF - number continuation, next 6 bits (a la UTF-8)
 */
 #include <map>
@@ -60,6 +60,7 @@ public:
 		K last_key = ~K(0U);
 		size_t bufsize;
 		Adapter ada;
+		//Reconsider?
 		char buffer[bufsize = 5* (2 + 8 * (sizeof(K) + sizeof(V)) / 6) * m.size() + 1],
 			*p=buffer;
 		for (auto & r: m)
@@ -88,7 +89,7 @@ public:
 		std::pair<K, V> elem(~K(0U),{});
 		const char* p=q;
 		Adapter ada;
-		bool flag;
+		bool last_flag = true, flag;
 		bool key_pending = false;
 		typename std::conditional<
 			(sizeof(K) <= sizeof(typename Adapter::itype)), typename Adapter::itype, K >::type v;
@@ -97,14 +98,14 @@ public:
 		{
 			read_varbyte_num(v,p,flag);
 			if (flag) {
-				
+				//Auto increment key if needed
+				if (!i && last_flag) ++elem.first;
+
 				if (!ada.can_set(elem.second,i,v)) {
 							ada.set_done(elem.second,i); i = 0;
-							++elem.first;
 							*ii++ = elem;
-							//Auto increment key
-							++elem.first; elem.second.~V(); new(&elem.second) V();
-							c++;
+							elem.second.~V(); new(&elem.second) V();
+							++elem.first;
 				}
 						//xtra value for the current record
 				ada.set(elem.second,i++,v);
@@ -118,6 +119,8 @@ public:
 				elem.first += v;
 			}
 			++c;
+			last_flag=flag;
+			
 		}
 		if (c) {
 			ada.set_done(elem.second,i);
@@ -132,7 +135,6 @@ public:
 	CompactUI2UIMap(const CompactUI2UIMap& other) {
 		//string like
 		free(q);
-		q=0;
 		if (other.q) {
 			q=(char*)malloc(strlen(other.q))+1;
 			strcpy(q,other.q);}
@@ -140,7 +142,7 @@ public:
 	}
 	CompactUI2UIMap(CompactUI2UIMap&& other) {
 		free(q);
-		*this = *other;
+		q = other.q;
 		other.q = 0;
 	}
 	~CompactUI2UIMap() {free(q);}
